@@ -602,24 +602,38 @@ function scoreInstagram(data: InstagramSnapshot | null, hadUrl: boolean, deep: a
   if (!data?.ok) return { score: 8, status: "데이터 부족", findings: [{ type: "issue", text: data?.error || "인스타그램 수집에 실패했습니다." }, { type: "tip", text: "Apify 3개 스크래퍼 설정을 확인하면 상세 리포트가 생성됩니다." }] };
 
   const posts = data.latest_posts || [];
-  const postScore = Math.min(8, posts.length);
-  const engagementScore = typeof data.avg_likes === "number" ? 5 : 0;
-  const profileScore = data.profile ? 5 : 0;
-  const ctaScore = containsAnyCount(posts, ["상담", "예약", "문의", "카카오", "DM", "전화"]) >= 2 ? 5 : 2;
-  const trustScore = containsAnyCount(posts, ["원장", "의료진", "공간", "장비", "위생", "안전"]) >= 3 ? 7 : 3;
-  const score = Math.min(35, 7 + postScore + engagementScore + profileScore + ctaScore + trustScore);
+  const profile = data.profile || {};
+  const followers = asNumber((profile as any).followersCount) || 0;
+  const engagementRate = typeof data.engagement_rate === "number" ? data.engagement_rate : null;
+  const ctaCount = containsAnyCount(posts, ["상담", "예약", "문의", "카카오", "DM", "전화", "링크", "프로필"]);
+  const doctorCount = containsAnyCount(posts, ["원장", "의료진", "대표원장", "doctor", "dr.", "전문의"]);
+  const spaceCount = containsAnyCount(posts, ["공간", "내부", "장비", "시설", "위생", "안전", "프라이빗"]);
+  const reelCount = posts.filter((p) => /video|reel/i.test(p.type || "") || typeof p.videoViews === "number").length;
+  const carouselCount = posts.filter((p) => p.isCarousel).length;
+
+  // 35점 만점이지만, 현재 버전은 이미지 자체를 눈으로 판독하지 않고 Apify 텍스트/메타데이터 중심으로 판단합니다.
+  // 따라서 실제 사진 품질, 원장 얼굴 노출, 공간 실체감까지 확인하기 전에는 28점(=100점 환산 80점)을 상한으로 둡니다.
+  const collectionScore = posts.length >= 18 ? 5 : posts.length >= 12 ? 4 : posts.length >= 6 ? 3 : 1;
+  const engagementScore = engagementRate === null ? (typeof data.avg_likes === "number" ? 2 : 0) : engagementRate >= 2 ? 4 : engagementRate >= 1 ? 3 : engagementRate >= 0.4 ? 2 : 1;
+  const profileScore = (asString((profile as any).biography) ? 1 : 0) + (asString((profile as any).externalUrl) ? 1 : 0) + (followers > 0 ? 1 : 0) + ((asNumber((profile as any).postsCount) || posts.length) > 0 ? 1 : 0);
+  const ctaScore = ctaCount >= 5 ? 4 : ctaCount >= 2 ? 3 : ctaCount >= 1 ? 2 : 0;
+  const trustScore = Math.min(6, (doctorCount >= 3 ? 3 : doctorCount >= 1 ? 2 : 0) + (spaceCount >= 3 ? 3 : spaceCount >= 1 ? 2 : 0));
+  const varietyScore = Math.min(5, (reelCount > 0 ? 2 : 0) + (carouselCount > 0 ? 2 : 0) + ((deep.hashtag_insights?.length || 0) >= 5 ? 1 : 0));
+  const rawScore = collectionScore + engagementScore + profileScore + ctaScore + trustScore + varietyScore;
+  const score = Math.min(28, Math.max(10, rawScore));
+
   return {
     score,
-    status: score >= 25 ? "양호" : score >= 16 ? "보통" : "미흡",
+    status: score >= 25 ? "양호" : score >= 18 ? "보통" : "미흡",
     findings: [
-      { type: "good", text: `Apify 3개 스크래퍼로 프로필·게시물·반응 데이터를 통합했습니다.` },
-      { type: "good", text: `최근 게시물 ${posts.length}건, 평균 좋아요 ${data.avg_likes ?? "-"}, 평균 댓글 ${data.avg_comments ?? "-"}을 확인했습니다.` },
-      { type: deep.content_mix?.some((x: any) => x.label === "상담/예약 CTA" && x.count > 0) ? "good" : "issue", text: `상담/예약 CTA 게시물은 ${deep.content_mix?.find((x: any) => x.label === "상담/예약 CTA")?.count ?? 0}건으로 확인됩니다.` },
-      { type: "tip", text: "의료진 얼굴, 실제 공간, 진료 연출 이미지를 고정 게시물과 대표 피드에 배치하세요." }
+      { type: "good", text: `Apify로 최근 게시물 ${posts.length}건과 프로필/반응 데이터를 수집했습니다.` },
+      { type: typeof data.avg_likes === "number" ? "good" : "issue", text: `평균 좋아요 ${data.avg_likes ?? "-"}, 평균 댓글 ${data.avg_comments ?? "-"}, 참여율 ${data.engagement_rate ?? "-"}%로 확인됩니다.` },
+      { type: ctaCount >= 2 ? "good" : "issue", text: `상담/예약 CTA 언급은 ${ctaCount}건입니다. 상담 전환 문구의 반복성과 명확성을 더 점검해야 합니다.` },
+      { type: doctorCount > 0 && spaceCount > 0 ? "good" : "issue", text: `의료진/원장 언급 ${doctorCount}건, 공간/장비 언급 ${spaceCount}건입니다. 실제 이미지 노출 여부는 상세 시각 점검이 필요합니다.` },
+      { type: "tip", text: "현재 점수는 Apify 데이터 기준의 잠정 점수입니다. 실제 사진 품질·얼굴 노출·공간 실체감 확인 전에는 만점 처리하지 않습니다." }
     ]
   };
 }
-
 function scorePage(data: PageSnapshot | null, hadUrl: boolean, max: number, label: string): ChannelResult {
   if (!hadUrl) return { score: 0, status: "미입력", findings: [{ type: "issue", text: `${label} URL이 입력되지 않아 분석에서 제외했습니다.` }, { type: "tip", text: `${label} URL을 입력하면 사진 노출과 메시지 구조를 함께 확인할 수 있습니다.` }] };
   if (!data?.ok) return { score: Math.max(2, Math.round(max * 0.2)), status: "수집 실패", findings: [{ type: "issue", text: data?.error || `${label} 페이지를 읽지 못했습니다.` }, { type: "tip", text: "접근 차단, 비공개, 로그인 필요 여부를 확인해주세요." }] };
