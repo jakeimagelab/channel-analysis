@@ -3,10 +3,10 @@
 import { useMemo, useRef, useState } from "react";
 
 const CH = [
-  { key: "insta", label: "인스타그램", dot: "#E85D2C", weight: 35 },
-  { key: "web", label: "홈페이지", dot: "#4285F4", weight: 35 },
-  { key: "naver", label: "네이버 플레이스", dot: "#03C75A", weight: 20 },
-  { key: "blog", label: "블로그", dot: "#FF6600", weight: 10 }
+  { key: "insta", label: "인스타그램", short: "INSTAGRAM", dot: "#E85D2C", weight: 35 },
+  { key: "web", label: "홈페이지", short: "WEBSITE", dot: "#4285F4", weight: 35 },
+  { key: "naver", label: "네이버 플레이스", short: "PLACE", dot: "#03C75A", weight: 20 },
+  { key: "blog", label: "블로그", short: "BLOG", dot: "#FF6600", weight: 10 }
 ] as const;
 
 const STEPS = [
@@ -170,6 +170,10 @@ export default function Page() {
   const ico = { issue: "⚠", good: "✓", tip: "→" } as const;
   const icol = { issue: "#C04A2A", good: "#155855", tip: "#185FA5" } as const;
 
+  const analyzedChannels = result?.analyzed_channels || [];
+  const priorities = result ? getPriorityItems(result.channels, analyzedChannels) : [];
+  const quickStats = result ? getQuickStats(result) : [];
+
   return (
     <>
       <nav>
@@ -301,32 +305,112 @@ export default function Page() {
             </div>
 
             <div className="result-body">
-              <div className="chips">
+              <div className="dashboard-grid">
+                <div className="dashboard-card dashboard-hero-card">
+                  <div className="dashboard-card-head">
+                    <span className="dashboard-card-kicker">Overall Snapshot</span>
+                    <span className={`dashboard-score-badge ${pctClass(result.overall_score)}`}>{gradeLabel(result.overall_score)}</span>
+                  </div>
+                  <div className="overview-flex">
+                    <ScoreRing value={result.overall_score} max={100} label="잠정 점수" color={fill(result.overall_score)} />
+                    <div className="overview-copy">
+                      <div className="overview-title">한눈에 보는 채널 건강도</div>
+                      <p className="overview-text">{result.overall_summary}</p>
+                      <div className="overview-highlight">📸 {result.photo_opportunity}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="dashboard-card dashboard-meta-card">
+                  <div className="dashboard-card-head">
+                    <span className="dashboard-card-kicker">Quick Stats</span>
+                    <span className="dashboard-card-note">요약 인포그래픽</span>
+                  </div>
+                  <div className="stats-grid">
+                    {quickStats.map((item) => (
+                      <StatTile key={item.label} label={item.label} value={item.value} note={item.note} />
+                    ))}
+                  </div>
+                  {result.data_note && <div className="meta-footnote">수집 기준: {result.data_note}</div>}
+                </div>
+              </div>
+
+              <div className="channel-score-board">
                 {CH.map((ch) => {
-                  const s = result.channels[ch.key]?.score ?? 0;
-                  const p = Math.round((s / ch.weight) * 100);
+                  const d = result.channels[ch.key];
+                  if (!d) return null;
+                  const p = Math.round((d.score / ch.weight) * 100);
+                  const active = analyzedChannels.includes(ch.key);
                   return (
-                    <div className="chip" key={ch.key}>
-                      <div className="chip-lbl">{ch.label.replace("네이버 플레이스", "플레이스")}</div>
-                      <div className={`chip-val ${pctClass(p)}`}>
-                        {s}
-                        <span className="chip-max">/{ch.weight}</span>
+                    <div className={`channel-score-card ${active ? "active" : "inactive"}`} key={ch.key}>
+                      <div className="channel-score-head">
+                        <span className="channel-score-dot" style={{ background: ch.dot }} />
+                        <span className="channel-score-name">{ch.label}</span>
                       </div>
+                      <ScoreRing value={d.score} max={ch.weight} label={ch.short} color={fill(p)} size={90} compact />
+                      <div className="channel-score-status">{active ? d.status : "미입력"}</div>
                     </div>
                   );
                 })}
               </div>
 
-              <div className="sum-box">
-                <div className="sum-title">종합 진단</div>
-                <div className="sum-txt">{result.overall_summary}</div>
-                <div className="sum-opp">📸 {result.photo_opportunity}</div>
-                {result.coverage_summary && <div className="data-note">분석 범위: {result.coverage_summary}</div>}
-                {typeof result.raw_total_score === "number" && typeof result.possible_points === "number" && (
-                  <div className="data-note">원점수: {result.raw_total_score} / {result.possible_points}</div>
-                )}
-                {result.data_note && <div className="data-note">수집 기준: {result.data_note}</div>}
+              <div className="infographic-grid">
+                <div className="infographic-panel">
+                  <div className="sum-title">개선 우선순위</div>
+                  <div className="priority-list">
+                    {priorities.length ? (
+                      priorities.map((item, idx) => (
+                        <div className="priority-item" key={`${item.type}-${idx}`}>
+                          <div className="priority-num">{idx + 1}</div>
+                          <div>
+                            <div className={`priority-type ${item.type}`}>{priorityLabel(item.type)}</div>
+                            <div className="priority-text">{item.text}</div>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="priority-empty">현재 표시할 우선순위 데이터가 없습니다.</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="infographic-panel">
+                  <div className="sum-title">채널별 점수 요약</div>
+                  <div className="channel-bar-list">
+                    {CH.map((ch) => {
+                      const d = result.channels[ch.key];
+                      if (!d) return null;
+                      const p = Math.round((d.score / ch.weight) * 100);
+                      return (
+                        <div className="channel-bar-row" key={`bar-${ch.key}`}>
+                          <div className="channel-bar-label-wrap">
+                            <span className="channel-bar-label">{ch.label}</span>
+                            <span className="channel-bar-score">{d.score}/{ch.weight}</span>
+                          </div>
+                          <div className="channel-bar-track">
+                            <div className="channel-bar-fill" style={{ width: `${p}%`, background: fill(p) }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {typeof result.raw_total_score === "number" && typeof result.possible_points === "number" && (
+                    <div className="meta-footnote">원점수: {result.raw_total_score} / {result.possible_points}</div>
+                  )}
+                </div>
               </div>
+
+              {result.analysis_mode === "instagram_only" && result.instagram_metrics && (
+                <div className="metric-showcase">
+                  <div className="sum-title">인스타그램 핵심 지표</div>
+                  <div className="metric-showcase-grid">
+                    <MetricCard label="수집 게시물" value={`${result.instagram_metrics.post_count ?? 0}건`} note="최근 게시물 기준" accent="teal" />
+                    <MetricCard label="평균 좋아요" value={result.instagram_metrics.avg_likes ?? "-"} note="게시물 반응" accent="orange" />
+                    <MetricCard label="평균 댓글" value={result.instagram_metrics.avg_comments ?? "-"} note="상담 대화 신호" accent="blue" />
+                    <MetricCard label="참여율" value={result.instagram_metrics.engagement_rate ? `${result.instagram_metrics.engagement_rate}%` : "-"} note="APIFY 계산값 기준" accent="amber" />
+                  </div>
+                </div>
+              )}
 
               <div className="detail-toggle-wrap">
                 <button className="detail-toggle" onClick={() => setDetailOpen((v) => !v)}>
@@ -340,92 +424,119 @@ export default function Page() {
 
               {detailOpen && (
                 <div className="detail-panel">
+                  {result.insta_deep_report && (
+                    <div className="detail-infographic-card">
+                      <div className="dashboard-card-head">
+                        <span className="dashboard-card-kicker">Instagram Deep Report</span>
+                        <span className="dashboard-card-note">상세 인포그래픽</span>
+                      </div>
+                      <div className="sum-txt detail-summary-copy">
+                        {result.insta_deep_report.executive_summary}
+                        {result.insta_deep_report.medical_branding_comment ? ` ${result.insta_deep_report.medical_branding_comment}` : ""}
+                      </div>
 
-              {result.insta_deep_report && (
-                <div className="ch-block">
-                  <div className="ch-head">
-                    <span className="ch-tag" style={{ background: "#E1F0EB", color: "#0F3F3C" }}>Instagram Deep Report</span>
-                    <div className="ch-bar"><div className="ch-bar-fill" style={{ width: "100%", background: "#155855" }} /></div>
-                    <span className="ch-pts" style={{ color: "#155855" }}>APIFY</span>
-                  </div>
+                      {result.insta_deep_report.metrics && result.insta_deep_report.metrics.length > 0 && (
+                        <div className="metric-showcase-grid deep-grid">
+                          {result.insta_deep_report.metrics.map((m, idx) => (
+                            <MetricCard key={`${m.label}-${idx}`} label={m.label} value={m.value ?? "-"} note="APIFY 수집값" accent={metricAccent(idx)} />
+                          ))}
+                        </div>
+                      )}
 
-                  <div className="sum-txt" style={{ marginBottom: 14 }}>
-                    {result.insta_deep_report.executive_summary}
-                    {result.insta_deep_report.medical_branding_comment ? ` ${result.insta_deep_report.medical_branding_comment}` : ""}
-                  </div>
+                      {result.insta_deep_report.content_mix && result.insta_deep_report.content_mix.length > 0 && (
+                        <div className="detail-section-card strong-card">
+                          <div className="sum-title">콘텐츠 믹스</div>
+                          <div className="mix-list">
+                            {result.insta_deep_report.content_mix.map((m, idx) => (
+                              <div className="mix-row" key={`${m.label}-${idx}`}>
+                                <div className="mix-head">
+                                  <span>{m.label}</span>
+                                  <span>{m.count}건 · {m.ratio}%</span>
+                                </div>
+                                <div className="mix-track">
+                                  <div className="mix-fill" style={{ width: `${Math.min(100, Math.max(4, m.ratio))}%` }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                  {result.insta_deep_report.metrics && result.insta_deep_report.metrics.length > 0 && (
-                    <div className="chips" style={{ marginBottom: 14 }}>
-                      {result.insta_deep_report.metrics.map((m, idx) => (
-                        <div className="chip" key={`${m.label}-${idx}`}>
-                          <div className="chip-lbl">{m.label}</div>
-                          <div className="chip-val g" style={{ fontSize: 16 }}>{m.value ?? "-"}</div>
+                      <div className="detail-section-grid two-col">
+                        {result.insta_deep_report.top_posts && result.insta_deep_report.top_posts.length > 0 && (
+                          <div className="detail-section-card strong-card">
+                            <div className="sum-title">반응 좋은 게시물 TOP</div>
+                            <div className="top-post-list">
+                              {result.insta_deep_report.top_posts.map((p, idx) => (
+                                <div className="top-post-item" key={`${p.caption}-${idx}`}>
+                                  <div className="top-post-rank">{idx + 1}</div>
+                                  <div className="top-post-copy">
+                                    <div className="top-post-type">{p.type || "게시물"}</div>
+                                    <div className="top-post-caption">{truncate(p.caption || "캡션 없음", 100)}</div>
+                                    <div className="top-post-meta">좋아요 {p.likes ?? "-"} · 댓글 {p.comments ?? "-"}</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="detail-section-card strong-card">
+                          <div className="sum-title">해시태그 / 키워드</div>
+                          <div className="keyword-group">
+                            <div className="keyword-group-title">해시태그</div>
+                            <div className="keyword-pills">
+                              {(result.insta_deep_report.hashtag_insights || []).slice(0, 10).map((h, idx) => (
+                                <span className="keyword-pill" key={`${h.tag}-${idx}`}>#{h.tag} <em>{h.count}</em></span>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="keyword-group">
+                            <div className="keyword-group-title">캡션 키워드</div>
+                            <div className="keyword-pills alt">
+                              {(result.insta_deep_report.caption_keywords || []).slice(0, 10).map((k, idx) => (
+                                <span className="keyword-pill alt" key={`${k.keyword}-${idx}`}>{k.keyword} <em>{k.count}</em></span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="detail-section-grid three-col">
+                        <ChecklistCard title="병원 신뢰 체크" items={(result.insta_deep_report.trust_checklist || []).slice(0, 6)} icon="✓" tone="good" />
+                        <ChecklistCard title="상담 전환 체크" items={(result.insta_deep_report.conversion_checklist || []).slice(0, 6)} icon="→" tone="tip" />
+                        <ChecklistCard title="다음 액션" items={(result.insta_deep_report.next_actions || []).slice(0, 6)} icon="1" tone="issue" numbered />
+                      </div>
+                    </div>
+                  )}
+
+                  {result.package_recommendation && (
+                    <div className="package-banner">
+                      <div>
+                        <div className="package-kicker">추천 촬영 구성</div>
+                        <div className="package-name">{result.package_recommendation.name}</div>
+                        <div className="package-reason">{result.package_recommendation.reason}</div>
+                      </div>
+                      <div className="package-items">
+                        {result.package_recommendation.items.map((item, idx) => (
+                          <span className="package-pill" key={`${item}-${idx}`}>{item}</span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {result.report_sections && result.report_sections.length > 0 && (
+                    <div className="detail-section-grid two-col">
+                      {result.report_sections.map((section, idx) => (
+                        <div className="detail-section-card" key={`${section.title}-${idx}`}>
+                          <div className="sum-title">{section.title}</div>
+                          {(section.items || []).map((item, itemIdx) => (
+                            <div className="detail-bullet" key={`${section.title}-${itemIdx}`}>• {item}</div>
+                          ))}
                         </div>
                       ))}
                     </div>
                   )}
-
-                  {result.insta_deep_report.content_mix && result.insta_deep_report.content_mix.length > 0 && (
-                    <div className="findings" style={{ marginBottom: 12 }}>
-                      {result.insta_deep_report.content_mix.map((m, idx) => (
-                        <div className="finding" key={`${m.label}-${idx}`}>
-                          <span className="fi" style={{ color: "#155855" }}>•</span>
-                          <span>{m.label}: {m.count}건 / {m.ratio}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {result.insta_deep_report.top_posts && result.insta_deep_report.top_posts.length > 0 && (
-                    <div className="sum-box" style={{ marginBottom: 12 }}>
-                      <div className="sum-title">반응 좋은 게시물 TOP</div>
-                      {result.insta_deep_report.top_posts.map((p, idx) => (
-                        <div className="sum-txt" key={`${p.caption}-${idx}`} style={{ marginBottom: 6 }}>
-                          {idx + 1}. [{p.type || "게시물"}] {p.caption} · 좋아요 {p.likes ?? "-"} / 댓글 {p.comments ?? "-"}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="findings">
-                    {(result.insta_deep_report.trust_checklist || []).slice(0, 4).map((item, idx) => (
-                      <div className="finding" key={`trust-${idx}`}><span className="fi" style={{ color: "#155855" }}>✓</span><span>{item}</span></div>
-                    ))}
-                    {(result.insta_deep_report.conversion_checklist || []).slice(0, 4).map((item, idx) => (
-                      <div className="finding" key={`conv-${idx}`}><span className="fi" style={{ color: "#185FA5" }}>→</span><span>{item}</span></div>
-                    ))}
-                  </div>
-
-                  {(result.insta_deep_report.hashtag_insights?.length || result.insta_deep_report.caption_keywords?.length) ? (
-                    <div className="data-note">
-                      해시태그: {(result.insta_deep_report.hashtag_insights || []).slice(0, 8).map((h) => `#${h.tag}(${h.count})`).join(" ") || "데이터 부족"}<br />
-                      키워드: {(result.insta_deep_report.caption_keywords || []).slice(0, 8).map((k) => `${k.keyword}(${k.count})`).join(" ") || "데이터 부족"}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-
-              {result.package_recommendation && (
-                <div className="sum-box">
-                  <div className="sum-title">추천 촬영 구성</div>
-                  <div className="sum-txt"><strong>{result.package_recommendation.name}</strong> — {result.package_recommendation.reason}</div>
-                  <div className="data-note">{result.package_recommendation.items.join(" · ")}</div>
-                </div>
-              )}
-
-              {result.report_sections && result.report_sections.length > 0 && (
-                <div className="detail-section-grid">
-                  {result.report_sections.map((section, idx) => (
-                    <div className="detail-section-card" key={`${section.title}-${idx}`}>
-                      <div className="sum-title">{section.title}</div>
-                      {(section.items || []).map((item, itemIdx) => (
-                        <div className="detail-bullet" key={`${section.title}-${itemIdx}`}>• {item}</div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-
                 </div>
               )}
 
@@ -478,6 +589,52 @@ export default function Page() {
   );
 }
 
+function getQuickStats(result: AnalyzeResult) {
+  const activeCount = result.analyzed_channels?.length || 0;
+  const insta = result.instagram_metrics;
+  return [
+    { label: "분석 채널", value: `${activeCount}개`, note: result.coverage_summary || "입력 채널 기준" },
+    { label: "원점수", value: typeof result.raw_total_score === "number" && typeof result.possible_points === "number" ? `${result.raw_total_score}/${result.possible_points}` : "-", note: "환산 전 점수" },
+    { label: "게시물 수집", value: insta?.post_count ? `${insta.post_count}건` : "-", note: "인스타그램 최근 게시물" },
+    { label: "주요 액션", value: result.package_recommendation?.name || "사진 보강", note: "추천 개선 방향" }
+  ];
+}
+
+function getPriorityItems(channels: Record<ChannelKey, ChannelResult>, activeKeys: ChannelKey[]) {
+  const items: Array<{ type: Finding["type"]; text: string }> = [];
+  activeKeys.forEach((key) => {
+    const findings = channels[key]?.findings || [];
+    findings.forEach((finding) => {
+      if (finding.type !== "good" && items.length < 6) {
+        items.push({ type: finding.type, text: finding.text });
+      }
+    });
+  });
+  return items;
+}
+
+function priorityLabel(type: Finding["type"]) {
+  if (type === "issue") return "우선 개선";
+  if (type === "tip") return "실행 팁";
+  return "강점";
+}
+
+function gradeLabel(score: number) {
+  if (score >= 85) return "High";
+  if (score >= 70) return "Good";
+  if (score >= 50) return "Care";
+  return "Risk";
+}
+
+function metricAccent(index: number) {
+  return ["teal", "orange", "blue", "amber", "teal", "orange"][index % 6] as "teal" | "orange" | "blue" | "amber";
+}
+
+function truncate(value: string, max: number) {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}…`;
+}
+
 function placeholderFor(key: ChannelKey) {
   switch (key) {
     case "insta":
@@ -489,6 +646,78 @@ function placeholderFor(key: ChannelKey) {
     case "blog":
       return "https://blog.naver.com/...";
   }
+}
+
+function ScoreRing({ value, max, label, color, size = 116, compact = false }: { value: number; max: number; label: string; color: string; size?: number; compact?: boolean }) {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const pct = max > 0 ? Math.max(0, Math.min(100, Math.round((safeValue / max) * 100))) : 0;
+  const stroke = compact ? 8 : 10;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (pct / 100) * circumference;
+
+  return (
+    <div className={`score-ring-wrap ${compact ? "compact" : ""}`} style={{ width: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="score-ring-svg">
+        <circle cx={size / 2} cy={size / 2} r={radius} stroke="#DCE8E5" strokeWidth={stroke} fill="none" />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={color}
+          strokeWidth={stroke}
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      </svg>
+      <div className="score-ring-center">
+        <div className="score-ring-value">{value}</div>
+        <div className="score-ring-max">/ {max}</div>
+        <div className="score-ring-label">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function StatTile({ label, value, note }: { label: string; value: string | number; note?: string }) {
+  return (
+    <div className="stat-tile">
+      <div className="stat-tile-label">{label}</div>
+      <div className="stat-tile-value">{value}</div>
+      {note ? <div className="stat-tile-note">{note}</div> : null}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, note, accent = "teal" }: { label: string; value: string | number; note?: string; accent?: "teal" | "orange" | "blue" | "amber" }) {
+  return (
+    <div className={`metric-card ${accent}`}>
+      <div className="metric-card-label">{label}</div>
+      <div className="metric-card-value">{value}</div>
+      {note ? <div className="metric-card-note">{note}</div> : null}
+    </div>
+  );
+}
+
+function ChecklistCard({ title, items, icon, tone, numbered }: { title: string; items: string[]; icon: string; tone: "good" | "tip" | "issue"; numbered?: boolean }) {
+  return (
+    <div className={`detail-section-card checklist-card ${tone}`}>
+      <div className="sum-title">{title}</div>
+      {items.length ? (
+        items.map((item, idx) => (
+          <div className="check-row" key={`${title}-${idx}`}>
+            <span className={`check-icon ${tone}`}>{numbered ? idx + 1 : icon}</span>
+            <span>{item}</span>
+          </div>
+        ))
+      ) : (
+        <div className="detail-bullet">표시할 데이터가 없습니다.</div>
+      )}
+    </div>
+  );
 }
 
 function Logo() {
