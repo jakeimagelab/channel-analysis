@@ -83,6 +83,7 @@ export default function Page() {
   const [result, setResult] = useState<AnalyzeResult | null>(null);
   const [toast, setToast] = useState("");
   const [error, setError] = useState("");
+  const [detailOpen, setDetailOpen] = useState(false);
   const resultRef = useRef<HTMLDivElement | null>(null);
 
   const displayName = useMemo(() => hospName.trim() || "분석 대상 병원", [hospName]);
@@ -108,6 +109,7 @@ export default function Page() {
   const startAnalysis = async () => {
     setError("");
     setResult(null);
+    setDetailOpen(false);
 
     const hasAnyUrl = Object.values(urls).some((v) => v.trim());
     if (!hasAnyUrl) {
@@ -326,6 +328,19 @@ export default function Page() {
                 {result.data_note && <div className="data-note">수집 기준: {result.data_note}</div>}
               </div>
 
+              <div className="detail-toggle-wrap">
+                <button className="detail-toggle" onClick={() => setDetailOpen((v) => !v)}>
+                  {detailOpen ? "자세히 닫기" : "자세히 보기"}
+                  <span>{detailOpen ? "▲" : "▼"}</span>
+                </button>
+                <div className="detail-toggle-note">
+                  Apify 3종 스크래퍼로 수집한 프로필·게시물·반응·해시태그·CTA 데이터를 더 자세히 확인합니다.
+                </div>
+              </div>
+
+              {detailOpen && (
+                <div className="detail-panel">
+
               {result.insta_deep_report && (
                 <div className="ch-block">
                   <div className="ch-head">
@@ -395,6 +410,22 @@ export default function Page() {
                   <div className="sum-title">추천 촬영 구성</div>
                   <div className="sum-txt"><strong>{result.package_recommendation.name}</strong> — {result.package_recommendation.reason}</div>
                   <div className="data-note">{result.package_recommendation.items.join(" · ")}</div>
+                </div>
+              )}
+
+              {result.report_sections && result.report_sections.length > 0 && (
+                <div className="detail-section-grid">
+                  {result.report_sections.map((section, idx) => (
+                    <div className="detail-section-card" key={`${section.title}-${idx}`}>
+                      <div className="sum-title">{section.title}</div>
+                      {(section.items || []).map((item, itemIdx) => (
+                        <div className="detail-bullet" key={`${section.title}-${itemIdx}`}>• {item}</div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
                 </div>
               )}
 
