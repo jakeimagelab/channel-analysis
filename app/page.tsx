@@ -244,7 +244,7 @@ export default function Page() {
             </div>
 
             <div className="section-desc" style={{ marginTop: 8 }}>
-              입력한 채널만 분석합니다. 종합 점수는 <strong>입력한 채널의 배점 합계를 100점으로 환산</strong>해서 보여줍니다.
+              입력한 채널만 분석합니다. 점수는 <strong>입력한 채널의 배점 합계를 100점으로 환산</strong>하되, 인스타그램은 실제 이미지 판독 전에는 잠정 점수로 표시합니다.
             </div>
           </div>
 
@@ -292,7 +292,7 @@ export default function Page() {
                 </div>
               </div>
               <div className="result-score-wrap">
-                <div className="result-score-lbl">입력 채널 기준 종합 점수</div>
+                <div className="result-score-lbl">입력 채널 기준 잠정 점수</div>
                 <div>
                   <span className="result-score-val">{result.overall_score}</span>
                   <span className="result-score-max"> / 100</span>
