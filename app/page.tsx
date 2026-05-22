@@ -48,8 +48,24 @@ type AnalyzeResult = {
     post_count?: number;
     avg_likes?: number | null;
     avg_comments?: number | null;
+    engagement_rate?: number | null;
     error?: string;
   } | null;
+  insta_deep_report?: {
+    executive_summary?: string;
+    medical_branding_comment?: string;
+    primary_photo_opportunity?: string;
+    metrics?: Array<{ label: string; value: string | number | null }>;
+    content_mix?: Array<{ label: string; count: number; ratio: number }>;
+    top_posts?: Array<{ caption: string; likes?: number | null; comments?: number | null; type?: string; url?: string }>;
+    hashtag_insights?: Array<{ tag: string; count: number }>;
+    caption_keywords?: Array<{ keyword: string; count: number }>;
+    trust_checklist?: string[];
+    conversion_checklist?: string[];
+    next_actions?: string[];
+  };
+  report_sections?: Array<{ title: string; items: string[] }>;
+  package_recommendation?: { name: string; reason: string; items: string[] };
 };
 
 export default function Page() {
@@ -310,14 +326,75 @@ export default function Page() {
                 {result.data_note && <div className="data-note">수집 기준: {result.data_note}</div>}
               </div>
 
-              {result.analysis_mode === "instagram_only" && result.instagram_metrics && (
-                <div className="sum-box" style={{ marginTop: 0 }}>
-                  <div className="sum-title">인스타그램 상세 수집 데이터</div>
-                  <div className="sum-txt">
-                    최근 게시물 {result.instagram_metrics.post_count ?? 0}건 수집
-                    {typeof result.instagram_metrics.avg_likes === "number" ? ` · 평균 좋아요 ${result.instagram_metrics.avg_likes}` : ""}
-                    {typeof result.instagram_metrics.avg_comments === "number" ? ` · 평균 댓글 ${result.instagram_metrics.avg_comments}` : ""}
+              {result.insta_deep_report && (
+                <div className="ch-block">
+                  <div className="ch-head">
+                    <span className="ch-tag" style={{ background: "#E1F0EB", color: "#0F3F3C" }}>Instagram Deep Report</span>
+                    <div className="ch-bar"><div className="ch-bar-fill" style={{ width: "100%", background: "#155855" }} /></div>
+                    <span className="ch-pts" style={{ color: "#155855" }}>APIFY</span>
                   </div>
+
+                  <div className="sum-txt" style={{ marginBottom: 14 }}>
+                    {result.insta_deep_report.executive_summary}
+                    {result.insta_deep_report.medical_branding_comment ? ` ${result.insta_deep_report.medical_branding_comment}` : ""}
+                  </div>
+
+                  {result.insta_deep_report.metrics && result.insta_deep_report.metrics.length > 0 && (
+                    <div className="chips" style={{ marginBottom: 14 }}>
+                      {result.insta_deep_report.metrics.map((m, idx) => (
+                        <div className="chip" key={`${m.label}-${idx}`}>
+                          <div className="chip-lbl">{m.label}</div>
+                          <div className="chip-val g" style={{ fontSize: 16 }}>{m.value ?? "-"}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {result.insta_deep_report.content_mix && result.insta_deep_report.content_mix.length > 0 && (
+                    <div className="findings" style={{ marginBottom: 12 }}>
+                      {result.insta_deep_report.content_mix.map((m, idx) => (
+                        <div className="finding" key={`${m.label}-${idx}`}>
+                          <span className="fi" style={{ color: "#155855" }}>•</span>
+                          <span>{m.label}: {m.count}건 / {m.ratio}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {result.insta_deep_report.top_posts && result.insta_deep_report.top_posts.length > 0 && (
+                    <div className="sum-box" style={{ marginBottom: 12 }}>
+                      <div className="sum-title">반응 좋은 게시물 TOP</div>
+                      {result.insta_deep_report.top_posts.map((p, idx) => (
+                        <div className="sum-txt" key={`${p.caption}-${idx}`} style={{ marginBottom: 6 }}>
+                          {idx + 1}. [{p.type || "게시물"}] {p.caption} · 좋아요 {p.likes ?? "-"} / 댓글 {p.comments ?? "-"}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="findings">
+                    {(result.insta_deep_report.trust_checklist || []).slice(0, 4).map((item, idx) => (
+                      <div className="finding" key={`trust-${idx}`}><span className="fi" style={{ color: "#155855" }}>✓</span><span>{item}</span></div>
+                    ))}
+                    {(result.insta_deep_report.conversion_checklist || []).slice(0, 4).map((item, idx) => (
+                      <div className="finding" key={`conv-${idx}`}><span className="fi" style={{ color: "#185FA5" }}>→</span><span>{item}</span></div>
+                    ))}
+                  </div>
+
+                  {(result.insta_deep_report.hashtag_insights?.length || result.insta_deep_report.caption_keywords?.length) ? (
+                    <div className="data-note">
+                      해시태그: {(result.insta_deep_report.hashtag_insights || []).slice(0, 8).map((h) => `#${h.tag}(${h.count})`).join(" ") || "데이터 부족"}<br />
+                      키워드: {(result.insta_deep_report.caption_keywords || []).slice(0, 8).map((k) => `${k.keyword}(${k.count})`).join(" ") || "데이터 부족"}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
+              {result.package_recommendation && (
+                <div className="sum-box">
+                  <div className="sum-title">추천 촬영 구성</div>
+                  <div className="sum-txt"><strong>{result.package_recommendation.name}</strong> — {result.package_recommendation.reason}</div>
+                  <div className="data-note">{result.package_recommendation.items.join(" · ")}</div>
                 </div>
               )}
 

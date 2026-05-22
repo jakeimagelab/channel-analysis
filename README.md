@@ -1,101 +1,64 @@
-# 포토클리닉 채널 분석기 — Fixed Next.js Version
+# 포토클리닉 4채널 분석기 — 인스타그램 분석기 통합형
 
-기존 `photoclinic_analyzer_v3.html`의 두 가지 핵심 문제를 해결한 버전입니다.
+이 프로젝트는 기존 인스타그램 분석기를 4채널 분석기 안으로 통합한 버전입니다.
 
-## 해결한 것
+- 인스타그램 URL만 입력하면: 인스타그램 단독 분석기처럼 동작
+- 인스타그램 + 홈페이지 + 네이버 플레이스 + 블로그를 입력하면: 4채널 종합 분석기처럼 동작
 
-### 1. Claude API 직접 호출 제거
-기존 HTML은 브라우저에서 `https://api.anthropic.com/v1/messages`를 직접 호출하는 구조였습니다.  
-이 방식은 API Key를 넣는 순간 GitHub/Vercel 배포 시 노출 위험이 큽니다.
+## 핵심 변경
 
-변경 후 구조:
+인스타그램 분석은 Apify 3개 Actor를 함께 사용하도록 확장했습니다.
 
-```txt
-브라우저 화면
-↓
-/api/analyze
-↓
-서버에서 ANTHROPIC_API_KEY 사용
-↓
-Claude 분석 결과 반환
-```
+1. `apify/instagram-scraper`
+2. `apify/instagram-post-scraper`
+3. `apify/instagram-profile-scraper`
 
-### 2. 실제 수집 데이터 기반 분석
-기존 파일은 URL을 프롬프트에 넣고 Claude에게 맡기는 구조라 실제 크롤링/수집 로직이 부족했습니다.
+수집 데이터는 서버 API(`/app/api/analyze/route.ts`)에서 처리하며, 브라우저에는 Apify 토큰이 노출되지 않습니다.
 
-변경 후 구조:
+## 환경변수
+
+Vercel Settings → Environment Variables에 아래 값을 추가하세요.
 
 ```txt
-인스타그램 URL → Apify Actor로 최근 게시물 수집
-홈페이지 URL → 서버에서 HTML title/meta/headings/images/text 수집
-네이버 플레이스 URL → 서버에서 접근 가능한 HTML 정보 수집
-블로그 URL → 서버에서 접근 가능한 HTML 정보 수집
-수집 데이터 → Claude 분석 프롬프트에 포함
+APIFY_TOKEN=apify_api_xxxxxxxxxxxxxxxxx
+APIFY_INSTAGRAM_SCRAPER_ACTOR_ID=apify/instagram-scraper
+APIFY_INSTAGRAM_POST_SCRAPER_ACTOR_ID=apify/instagram-post-scraper
+APIFY_INSTAGRAM_PROFILE_SCRAPER_ACTOR_ID=apify/instagram-profile-scraper
+APIFY_INSTAGRAM_LIMIT=18
 ```
 
-Claude API Key가 없거나 Claude 호출이 실패하면, 완전한 가짜 mock 대신 **수집 데이터 기반 간이 채점**으로 결과를 반환합니다.
+선택적으로 Claude 문장 보정을 사용하려면 아래를 추가하세요.
 
-## 설치
+```txt
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+```
+
+Claude 키가 없어도 포토클리닉 자체 로직으로 기본 리포트가 생성됩니다.
+
+## 로컬 실행
 
 ```bash
 npm install
-```
-
-## 환경변수 설정
-
-`.env.example`을 참고해 `.env.local` 파일을 만드세요.
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
-ANTHROPIC_MODEL=claude-sonnet-4-20250514
-
-APIFY_TOKEN=apify_api_xxxxxxxxxxxxxxxxx
-APIFY_INSTAGRAM_ACTOR_ID=apify/instagram-scraper
-APIFY_INSTAGRAM_LIMIT=12
-```
-
-## 실행
-
-```bash
 npm run dev
 ```
 
-브라우저에서 확인:
+## Vercel 배포
 
-```txt
-http://localhost:3000
-```
+1. GitHub 저장소 최상단에 `package.json`, `app/`, `next.config.js`가 보이도록 업로드
+2. Vercel에서 GitHub 저장소 Import
+3. 환경변수 입력
+4. Deploy
+5. 환경변수 변경 후에는 반드시 Redeploy
 
-## Vercel 환경변수
+## 리포트 구성
 
-Vercel Project Settings → Environment Variables에 아래 값을 넣으세요.
-
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_MODEL`
-- `APIFY_TOKEN`
-- `APIFY_INSTAGRAM_ACTOR_ID`
-- `APIFY_INSTAGRAM_LIMIT`
-
-## 주요 파일
-
-```txt
-app/page.tsx
-- 사용자 입력 화면
-- 분석 진행 UI
-- 결과 리포트 출력
-
-app/api/analyze/route.ts
-- 서버 API
-- Apify 인스타그램 수집
-- 홈페이지/네이버/블로그 HTML 수집
-- Claude 분석
-- Claude 실패 시 수집 데이터 기반 간이 채점
-
-app/globals.css
-- 기존 포토클리닉 디자인 스타일
-```
-
-## 주의
-
-네이버 플레이스, 일부 병원 홈페이지, 일부 블로그는 서버 접근을 차단하거나 동적 렌더링으로 HTML 정보가 제한될 수 있습니다.  
-이 경우 결과에는 “수집 실패 / 데이터 부족”으로 표시되며, 상용화 단계에서는 Playwright 또는 전용 크롤링 API를 추가하는 것이 좋습니다.
+- 인스타그램 프로필/게시물/반응 데이터 통합
+- 평균 좋아요, 평균 댓글, 참여율
+- 콘텐츠 믹스: 릴스/영상, 캐러셀, 의료진/원장 언급, 공간/장비 언급, 상담/예약 CTA
+- 반응 좋은 게시물 TOP
+- 해시태그/캡션 키워드
+- 병원 신뢰 체크리스트
+- 상담 전환 체크리스트
+- 추천 촬영 구성
+- 4채널 점수 요약
