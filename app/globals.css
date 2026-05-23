@@ -141,3 +141,16 @@ body{font-size:15px;line-height:1.7;}
 @media(max-width:820px){
   .findings-channel-grid,.seo-grid{grid-template-columns:1fr;}
 }
+
+/* ── DetailBreakdown 항목별 점수바 ── */
+.detail-breakdown{margin-top:14px;padding-top:12px;border-top:.5px dashed var(--border);}
+.detail-breakdown-title{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:9px;}
+.detail-row{display:grid;grid-template-columns:120px 1fr 36px;align-items:center;gap:8px;margin-bottom:7px;}
+.detail-label{font-size:12px;color:var(--muted);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.detail-bar-wrap{height:6px;background:var(--border);border-radius:3px;overflow:hidden;}
+.detail-bar{height:100%;border-radius:3px;transition:width .8s ease;}
+.detail-score{font-size:12px;font-weight:700;text-align:right;}
+
+/* 채점 근거 카드 넓게 */
+.findings-channel-grid{grid-template-columns:1fr 1fr;}
+@media(max-width:820px){.findings-channel-grid{grid-template-columns:1fr;}}

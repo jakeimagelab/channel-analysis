@@ -193,7 +193,7 @@ export default function Page() {
             </ReportSection>
 
             {/* 02 BRAND SCORES */}
-            <ReportSection no="02" title="Brand Scores" subtitle="포토클리닉 채점 기준표(5항목×가중치)로 환산한 채널별 점수입니다.">
+            <ReportSection no="02" title="Brand Scores" subtitle="포토클리닉 채점 기준표(5항목×가중치)로 환산한 채널별 점수 및 근거입니다.">
               <div className="score-clean-grid">
                 {CH.map(ch => {
                   const d   = result.channels[ch.key];
@@ -201,23 +201,25 @@ export default function Page() {
                   return <ScoreClean key={ch.key} label={ch.label} score={pct} detail={d ? `${d.score}/${ch.weight} · ${d.status}` : "미입력"} />;
                 })}
               </div>
-              {/* 채널별 세부 findings */}
               <div className="findings-channel-grid">
                 {CH.map(ch => {
                   const d = result.channels[ch.key];
-                  if (!d || !d.findings.length) return null;
+                  if (!d) return null;
+                  const scoreColor = d.score / ch.weight >= 0.7 ? "var(--teal)" : d.score / ch.weight >= 0.4 ? "var(--amber)" : "var(--red)";
                   return (
                     <div className="findings-channel-card" key={ch.key}>
                       <div className="findings-channel-head">
                         <span className="ch-key-badge">{ch.label}</span>
-                        <span className="ch-key-score">{d.score}/{ch.weight}점</span>
+                        <span className="ch-key-score" style={{ color: scoreColor }}>{d.score}/{ch.weight}점 · {d.status}</span>
                       </div>
+                      {d.status === "미입력" && <p className="empty-text" style={{ padding:"8px 0" }}>URL이 입력되지 않아 분석에서 제외됐습니다.</p>}
                       {d.findings.map((f, i) => (
                         <div className={`finding-row finding-${f.type}`} key={i}>
                           <span>{f.type === "good" ? "✓" : f.type === "tip" ? "→" : "⚠"}</span>
                           <p>{f.text}</p>
                         </div>
                       ))}
+                      {d.detail && <DetailBreakdown detail={d.detail} chKey={ch.key} />}
                     </div>
                   );
                 })}
@@ -441,6 +443,46 @@ function proposalText(item: string, idx: number) {
   ];
   return defaults[idx] || `${item}을 중심으로 병원 브랜드 이미지를 정리합니다.`;
 }
+
+// ─── DetailBreakdown ──────────────────────────
+const ITEM_LABELS: Record<string, Record<string, string>> = {
+  insta: { toneScore:"피드 톤&매너", qualityScore:"전문사진 비율", peopleScore:"원장·스탭 등장", spaceScore:"공간·시술 사진", engScore:"참여율·최신성" },
+  web:   { messageScore:"메시지·사진 일치", seoScore:"SEO 기본", aiSeoScore:"AI검색 대응", imageScore:"이미지 품질", contentScore:"원장·콘텐츠(E-E-A-T)" },
+  naver: { photoScore:"대표 사진", facilityScore:"내부 사진·시설", infoScore:"기본정보 완성도", trustScore:"리뷰·의료진 신뢰" },
+  blog:  { contentScore:"사진·콘텐츠 일치", seoScore:"네이버 SEO 최적화" },
+};
+
+function DetailBreakdown({ detail, chKey }: { detail: Record<string, unknown>; chKey: string }) {
+  const labels = ITEM_LABELS[chKey] || {};
+  const scoreEntries = Object.entries(labels).map(([key, label]) => {
+    const val = detail[key];
+    if (typeof val !== "number") return null;
+    // 채널별 항목 만점
+    const maxMap: Record<string, number> = { insta:7, web:7, naver:5, blog:5 };
+    const max = maxMap[chKey] || 7;
+    const pct = Math.round((val / max) * 100);
+    const color = pct >= 70 ? "var(--teal)" : pct >= 40 ? "var(--amber)" : "var(--red)";
+    return (
+      <div className="detail-row" key={key}>
+        <span className="detail-label">{label}</span>
+        <div className="detail-bar-wrap">
+          <div className="detail-bar" style={{ width:`${pct}%`, background:color }} />
+        </div>
+        <span className="detail-score" style={{ color }}>{val}/{max}</span>
+      </div>
+    );
+  }).filter(Boolean);
+
+  if (!scoreEntries.length) return null;
+
+  return (
+    <div className="detail-breakdown">
+      <div className="detail-breakdown-title">항목별 점수</div>
+      {scoreEntries}
+    </div>
+  );
+}
+
 
 function Logo() {
   return (
