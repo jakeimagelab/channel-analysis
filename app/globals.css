@@ -105,3 +105,39 @@ body{font-size:15px;line-height:1.7;}
   .report-section h3{font-size:24px;}
   .report-section-head{align-items:flex-start;}
 }
+
+/* ── 채널별 findings 그리드 ── */
+.findings-channel-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:20px;}
+.findings-channel-card{border:1px solid var(--border);border-radius:14px;padding:18px;background:#fff;}
+.findings-channel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);}
+.ch-key-badge{font-size:11px;font-weight:800;color:var(--orange);text-transform:uppercase;letter-spacing:.08em;}
+.ch-key-score{font-size:12px;color:var(--muted);font-weight:600;}
+.finding-row{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:.5px solid var(--border);}
+.finding-row:last-child{border-bottom:none;}
+.finding-row span{font-size:13px;flex-shrink:0;margin-top:1px;font-weight:700;}
+.finding-row p{font-size:13px;line-height:1.6;color:var(--text);margin:0;word-break:keep-all;}
+.finding-good span{color:var(--teal);}
+.finding-issue span{color:var(--red);}
+.finding-tip span{color:var(--amber);}
+
+/* ── SEO 섹션 ── */
+.seo-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:18px;}
+.seo-card{display:flex;gap:14px;align-items:flex-start;border:1px solid var(--border);border-radius:13px;padding:16px 18px;background:#fff;}
+.seo-card-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;flex-shrink:0;}
+.seo-good .seo-card-icon{background:var(--teal-lt);color:var(--teal);}
+.seo-warn .seo-card-icon{background:var(--amber-bg);color:var(--amber);}
+.seo-bad  .seo-card-icon{background:var(--red-bg);color:var(--red);}
+.seo-good{border-left:3px solid var(--teal);}
+.seo-warn{border-left:3px solid var(--amber);}
+.seo-bad {border-left:3px solid var(--red);}
+.seo-card-body h4{font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.seo-card-body p{font-size:13px;color:var(--muted);line-height:1.6;word-break:keep-all;}
+.seo-insight-list{background:var(--teal-bg);border-radius:12px;padding:14px 18px;display:flex;flex-direction:column;gap:8px;}
+.seo-insight-row{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:#1A3D36;}
+.seo-insight-row span{color:var(--orange);font-weight:800;flex-shrink:0;}
+.seo-insight-row p{margin:0;line-height:1.6;word-break:keep-all;}
+
+/* ── 반응형 보완 ── */
+@media(max-width:820px){
+  .findings-channel-grid,.seo-grid{grid-template-columns:1fr;}
+}
