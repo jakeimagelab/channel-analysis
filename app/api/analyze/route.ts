@@ -197,52 +197,103 @@ function getImageAltSamples(html: string, maxItems = 8): string[] {
 // ─────────────────────────────────────────────
 async function collectPage(url: string): Promise<PageSnapshot | null> {
   if (!url) return null;
+
+  // 수집 실패 이유를 상세하게 기록하기 위한 헬퍼
+  const makeFailSnapshot = (reason: string, httpStatus?: number): PageSnapshot => ({
+    input_url: url, ok: false, status: httpStatus,
+    error: reason,
+    collect_reason: classifyCollectError(reason, httpStatus)
+  } as PageSnapshot);
+
+  let res: Response;
   try {
-    const res = await fetch(url, {
+    res = await fetch(url, {
       redirect: "follow",
       headers: {
-        "user-agent": "Mozilla/5.0 (compatible; PhotoclinicChannelAnalyzer/1.0; +https://www.photoclinic.kr)",
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "accept-language": "ko-KR,ko;q=0.9,en;q=0.7"
+        // 일반 브라우저로 위장 — 봇 차단 우회
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+        "accept-encoding": "gzip, deflate, br",
+        "cache-control": "no-cache",
       },
-      signal: AbortSignal.timeout(12000)
+      signal: AbortSignal.timeout(18000)  // 12→18초로 연장
     });
-    const html = await res.text();
-    const imgTags     = (html.match(/<img\b/gi) || []).length;
-    const imgAltTags  = (html.match(/<img[^>]+alt=["'][^"']+["'][^>]*>/gi) || []).length;
-    const jsonLdBlocks = Array.from(html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi))
-      .map(m => { try { return JSON.parse(m[1]); } catch { return null; } })
-      .filter(Boolean);
-    const jsonLdTypes = jsonLdBlocks.map((b: any) => b["@type"] || "").filter(Boolean);
-    const textRaw     = stripHtml(html);
-
-    return {
-      input_url:          url,
-      ok:                 res.ok,
-      status:             res.status,
-      final_url:          res.url,
-      title:              cleanText((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").replace(/\s+/g, " "), 200),
-      description:        getMeta(html, "description") || getMeta(html, "og:description"),
-      h1:                 getTagText(html, "h1", 4),
-      headings:           [...getTagText(html, "h2", 6), ...getTagText(html, "h3", 6)].slice(0, 10),
-      image_count:        imgTags,
-      image_alt_count:    imgAltTags,
-      image_alt_samples:  getImageAltSamples(html, 8),
-      text_sample:        cleanText(textRaw, 2000),
-      text_length:        textRaw.length,
-      has_json_ld:        jsonLdBlocks.length > 0,
-      json_ld_types:      jsonLdTypes,
-      has_faq:            /FAQ|자주.*묻|자주.*질문/i.test(html),
-      has_schema_org:     html.includes("schema.org"),
-      canonical:          getMeta(html, "canonical") || (html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] || ""),
-      og_title:           getMeta(html, "og:title"),
-      og_description:     getMeta(html, "og:description"),
-      robots:             getMeta(html, "robots"),
-      internal_links:     (html.match(/<a\s/gi) || []).length
-    };
   } catch (err) {
-    return { input_url: url, ok: false, error: err instanceof Error ? err.message : "페이지 수집 실패" };
+    const msg = err instanceof Error ? err.message : "네트워크 오류";
+    // timeout, DNS 실패 등 fetch 자체가 실패한 경우
+    return makeFailSnapshot(msg);
   }
+
+  // HTTP 에러여도 HTML을 읽을 수 있으면 최대한 파싱 시도
+  let html = "";
+  try { html = await res.text(); } catch { /* empty */ }
+
+  // 응답이 HTML이 아닌 경우 (JSON API, 리다이렉트 루프 등)
+  const contentType = res.headers.get("content-type") || "";
+  const isHtml = contentType.includes("html") || html.trimStart().startsWith("<");
+
+  if (!res.ok && (!isHtml || html.length < 200)) {
+    return makeFailSnapshot(
+      res.status === 403 ? "봇 차단(403) — Cloudflare 또는 서버 방화벽이 수집을 막고 있습니다" :
+      res.status === 401 ? "로그인 필요(401) — 접근 권한이 없습니다" :
+      res.status === 404 ? "페이지 없음(404) — URL을 다시 확인해주세요" :
+      res.status === 429 ? "요청 과다(429) — 잠시 후 재시도 해주세요" :
+      res.status >= 500  ? `서버 오류(${res.status}) — 해당 사이트 서버 문제입니다` :
+      `HTTP ${res.status}`,
+      res.status
+    );
+  }
+
+  // HTML 파싱
+  const imgTags    = (html.match(/<img\b/gi) || []).length;
+  const imgAltTags = (html.match(/<img[^>]+alt=["'][^"']{1,}["'][^>]*>/gi) || []).length;
+  const jsonLdBlocks = Array.from(html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi))
+    .map(m => { try { return JSON.parse(m[1]); } catch { return null; } }).filter(Boolean);
+  const jsonLdTypes = jsonLdBlocks.map((b: any) => b["@type"] || "").filter(Boolean);
+  const textRaw    = stripHtml(html);
+  const titleRaw   = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").replace(/\s+/g, " ");
+
+  return {
+    input_url:         url,
+    ok:                res.ok,           // HTTP 200대만 true
+    status:            res.status,
+    final_url:         res.url,
+    // HTTP 에러여도 HTML이 있으면 파싱 결과 포함 (부분 수집)
+    partial:           !res.ok && isHtml && html.length >= 200,
+    title:             cleanText(titleRaw, 200),
+    description:       getMeta(html, "description") || getMeta(html, "og:description"),
+    h1:                getTagText(html, "h1", 4),
+    headings:          [...getTagText(html, "h2", 6), ...getTagText(html, "h3", 6)].slice(0, 10),
+    image_count:       imgTags,
+    image_alt_count:   imgAltTags,
+    image_alt_samples: getImageAltSamples(html, 8),
+    text_sample:       cleanText(textRaw, 2000),
+    text_length:       textRaw.length,
+    has_json_ld:       jsonLdBlocks.length > 0,
+    json_ld_types:     jsonLdTypes,
+    has_faq:           /FAQ|자주.*묻|자주.*질문/i.test(html),
+    has_schema_org:    html.includes("schema.org"),
+    canonical:         getMeta(html, "canonical") || (html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1] || ""),
+    og_title:          getMeta(html, "og:title"),
+    og_description:    getMeta(html, "og:description"),
+    robots:            getMeta(html, "robots"),
+    internal_links:    (html.match(/<a\s/gi) || []).length,
+    collect_reason:    !res.ok ? classifyCollectError(`HTTP ${res.status}`, res.status) : undefined
+  };
+}
+
+function classifyCollectError(msg: string, status?: number): string {
+  if (status === 403 || /403|forbidden|차단|block/i.test(msg))
+    return "봇 차단 — Cloudflare·카페24·고도몰 등 보안 방화벽이 수집 서버를 막고 있습니다. 직접 점검 필요.";
+  if (status === 404) return "URL 오류 — 페이지가 존재하지 않습니다. URL을 다시 확인하세요.";
+  if (status === 401) return "접근 제한 — 로그인이 필요한 페이지입니다.";
+  if (status === 429) return "요청 제한 — 단시간 요청이 많아 차단됐습니다.";
+  if (status && status >= 500) return `서버 오류(${status}) — 해당 사이트 서버에 문제가 있습니다.`;
+  if (/timeout|시간 초과/i.test(msg)) return "타임아웃 — 18초 안에 응답이 없었습니다. 사이트 속도가 느리거나 차단됐을 수 있습니다.";
+  if (/ENOTFOUND|DNS/i.test(msg)) return "DNS 오류 — 도메인을 찾을 수 없습니다. URL을 다시 확인하세요.";
+  if (/ECONNREFUSED/i.test(msg)) return "연결 거부 — 서버가 연결을 거부했습니다.";
+  return msg;
 }
 
 // ─────────────────────────────────────────────
@@ -470,126 +521,114 @@ function scoreInstagram(data: InstagramSnapshot | null, hadUrl: boolean, deep: a
 }
 
 // ─────────────────────────────────────────────
-// ★ SCORING — 홈페이지
-//   채점 기준: 5항목 × 7점 = 35점 만점
-//   + SEO / AI검색 최적화 별도 진단
+// ★ SCORING — 홈페이지 (5항목 × 7점 = 35점)
 // ─────────────────────────────────────────────
 function scoreWeb(data: PageSnapshot | null, hadUrl: boolean): ChannelResult {
-  if (!hadUrl) return { score: 0, status: "미입력", findings: [{ type:"issue", text:"홈페이지 URL이 입력되지 않아 분석에서 제외했습니다." }, { type:"tip", text:"홈페이지 URL을 입력하면 SEO·AI검색 최적화까지 진단합니다." }] };
-  if (!data?.ok) return { score: 7, status: "수집 실패", findings: [{ type:"issue", text: data?.error || "홈페이지 페이지를 읽지 못했습니다." }, { type:"tip", text:"접근 차단·비공개·로그인 필요 여부를 확인해주세요." }] };
+  if (!hadUrl) return { score: 0, status: "미입력", findings: [
+    { type:"issue", text:"홈페이지 URL이 입력되지 않아 분석에서 제외했습니다." },
+    { type:"tip",   text:"홈페이지 URL을 입력하면 SEO·AI검색 최적화까지 진단합니다." }
+  ]};
 
-  const title       = data.title       || "";
-  const desc        = data.description || "";
-  const h1Count     = (data.h1 || []).length;
-  const headings    = (data.headings   || []).length;
-  const imgCount    = data.image_count || 0;
-  const altCount    = data.image_alt_count || 0;
-  const textLen     = data.text_length || 0;
-  const hasJsonLd   = data.has_json_ld || false;
-  const jsonTypes   = data.json_ld_types || [];
-  const hasFaq      = data.has_faq || false;
-  const hasSchema   = data.has_schema_org || false;
-  const hasOg       = Boolean(data.og_title);
-  const descLen     = desc.length;
-  const sample      = (data.text_sample || "").toLowerCase();
+  const isPartial = data && !data.ok && (data as any).partial;
+
+  if (!data || (!data.ok && !isPartial)) {
+    const reason = (data as any)?.collect_reason || data?.error || "홈페이지를 읽지 못했습니다.";
+    return { score: 5, status: "수집 실패", findings: [
+      { type:"issue", text:`수집 실패 — ${reason}` },
+      { type:"tip",   text:"대안: ① URL 재확인(www 유무, https/http) ② 봇 차단 사이트는 직접 육안 점검 필요" }
+    ]};
+  }
+
+  const title    = data.title       || "";
+  const desc     = data.description || "";
+  const h1Count  = (data.h1 || []).length;
+  const headings = (data.headings   || []).length;
+  const imgCount = data.image_count || 0;
+  const altCount = data.image_alt_count || 0;
+  const textLen  = data.text_length || 0;
+  const hasJsonLd = data.has_json_ld || false;
+  const jsonTypes = data.json_ld_types || [];
+  const hasFaq   = data.has_faq || false;
+  const hasSchema = data.has_schema_org || false;
+  const hasOg    = Boolean(data.og_title);
+  const descLen  = desc.length;
+  const sample   = (data.text_sample || "").toLowerCase();
   const hasDoctorKeyword = /원장|의료진|대표원장|전문의|doctor|경력|약력/.test(sample);
   const hasTreatmentInfo = /시술|진료|치료|수술|상담|예약/.test(sample);
-  const altRatio    = imgCount > 0 ? altCount / imgCount : 0;
+  const altRatio = imgCount > 0 ? altCount / imgCount : 0;
 
-  // ① 메시지·사진 일치 (콘텐츠 관련성) (7점)
-  const messageScore = (() => {
-    let s = 0;
-    if (hasDoctorKeyword)   s += 2;
-    if (hasTreatmentInfo)   s += 2;
-    if (h1Count >= 1)       s += 2;
-    if (headings >= 3)      s += 1;
-    return Math.min(7, s);
-  })();
-
-  // ② SEO 기본 설정 (7점)
-  const seoScore = (() => {
-    let s = 0;
-    if (title.length >= 10 && title.length <= 70) s += 2; else if (title.length > 0) s += 1;
-    if (descLen >= 50 && descLen <= 160) s += 2; else if (descLen > 0) s += 1;
-    if (altRatio >= 0.8) s += 2; else if (altRatio >= 0.4) s += 1;
-    if (hasOg) s += 1;
-    return Math.min(7, s);
-  })();
-
-  // ③ AI검색 대응 구조 (7점)
-  const aiSeoScore = (() => {
-    let s = 0;
-    if (hasJsonLd) {
-      s += 2;
-      if (jsonTypes.some(t => /MedicalBusiness|Physician|LocalBusiness|Hospital/i.test(t))) s += 2;
-      else s += 1;
-    }
-    if (hasFaq)    s += 2;
-    if (hasSchema) s += 1;
-    return Math.min(7, s);
-  })();
-
-  // ④ 이미지 품질 (이미지 수·alt 비율로 추정) (7점)
-  const imageScore = (() => {
-    let s = 0;
-    if (imgCount >= 15) s += 3; else if (imgCount >= 8) s += 2; else if (imgCount >= 3) s += 1;
-    if (altRatio >= 0.7) s += 2; else if (altRatio >= 0.4) s += 1;
-    if (textLen >= 2000) s += 2; else if (textLen >= 800) s += 1;
-    return Math.min(7, s);
-  })();
-
-  // ⑤ 원장·공간 콘텐츠 (7점)
-  const contentScore = (() => {
-    let s = 0;
-    if (hasDoctorKeyword)   s += 3;
-    if (hasTreatmentInfo)   s += 2;
-    if (textLen >= 1500)    s += 2;
-    return Math.min(7, s);
-  })();
+  // ① 메시지·사진 일치 (7점)
+  const messageScore = Math.min(7, (hasDoctorKeyword?2:0) + (hasTreatmentInfo?2:0) + (h1Count>=1?2:0) + (headings>=3?1:0));
+  // ② SEO 기본 (7점)
+  const seoScore = Math.min(7,
+    (title.length>=10&&title.length<=70?2:title.length>0?1:0) +
+    (descLen>=50&&descLen<=160?2:descLen>0?1:0) +
+    (altRatio>=0.8?2:altRatio>=0.4?1:0) + (hasOg?1:0));
+  // ③ AI검색 대응 (7점)
+  const aiSeoScore = Math.min(7,
+    (hasJsonLd?(jsonTypes.some((t:string)=>/MedicalBusiness|Physician|LocalBusiness|Hospital/i.test(t))?4:3):0) +
+    (hasFaq?2:0) + (hasSchema?1:0));
+  // ④ 이미지 수·품질 (7점)
+  const imageScore = Math.min(7,
+    (imgCount>=15?3:imgCount>=8?2:imgCount>=3?1:0) +
+    (altRatio>=0.7?2:altRatio>=0.4?1:0) +
+    (textLen>=2000?2:textLen>=800?1:0));
+  // ⑤ 원장·콘텐츠 E-E-A-T (7점)
+  const contentScore = Math.min(7, (hasDoctorKeyword?3:0) + (hasTreatmentInfo?2:0) + (textLen>=1500?2:0));
 
   const score = messageScore + seoScore + aiSeoScore + imageScore + contentScore;
 
   const findings: Finding[] = [
-    { type: title.length >= 10 ? "good" : "issue",
-      text: `페이지 제목: "${title.slice(0,50)}" (${title.length}자) — ${title.length < 10 ? "제목이 너무 짧습니다" : title.length > 70 ? "70자 이내 권장" : "적정"}` },
-    { type: descLen >= 50 && descLen <= 160 ? "good" : "issue",
-      text: `메타 설명: ${descLen}자 — ${descLen === 0 ? "메타 설명 없음, 검색·공유 클릭률 저하" : descLen < 50 ? "설명이 너무 짧습니다" : descLen > 160 ? "160자 이내 권장" : "적정 길이"}` },
+    ...(isPartial ? [{ type:"tip" as FindingType, text:`부분 수집(HTTP ${data.status}) — 일부 데이터만 읽혔습니다. 결과는 참고용입니다.` }] : []),
+    { type: title.length>=10 ? "good" : "issue",
+      text: `[페이지 제목] "${title.slice(0,50)}" (${title.length}자) → ${title.length<10?"너무 짧음":title.length>70?"70자 이내 권장":"적정"}` },
+    { type: descLen>=50&&descLen<=160 ? "good" : "issue",
+      text: `[메타 설명] ${descLen}자 → ${descLen===0?"없음 — 검색 클릭률 저하":descLen<50?"너무 짧음":descLen>160?"160자 이내 권장":"적정"}` },
     { type: hasJsonLd ? "good" : "issue",
       text: hasJsonLd
-        ? `구조화 데이터(JSON-LD) 확인됨 — 타입: ${jsonTypes.join(", ") || "확인 필요"} · AI검색 노출에 유리`
-        : "구조화 데이터(JSON-LD) 없음 — MedicalBusiness 스키마 추가 시 AI검색·구글 리치결과 노출 유리" },
+        ? `[JSON-LD] ${jsonTypes.join(", ")||"타입 미상"} 확인 → AI검색·구글 리치결과 노출 유리`
+        : "[JSON-LD] 없음 → MedicalBusiness 스키마 추가 시 AI검색·구글 리치결과 개선" },
     { type: hasFaq ? "good" : "tip",
-      text: hasFaq ? "FAQ 섹션 확인됨 — AI 검색(SGE/Perplexity)에서 직접 인용될 가능성 높음" : "FAQ 섹션 없음 — 자주 묻는 진료 질문 섹션 추가 시 AI검색 노출 상승" },
-    { type: altRatio >= 0.5 ? "good" : "issue",
-      text: `이미지 ${imgCount}개 중 alt 텍스트 ${altCount}개 (${Math.round(altRatio*100)}%) — ${altRatio < 0.5 ? "이미지 alt 태그 보완 필요, SEO·접근성 개선" : "alt 태그 양호"}` },
+      text: hasFaq ? "[FAQ] 확인됨 → SGE·Perplexity 직접 인용 가능성 높음" : "[FAQ] 없음 → 자주 묻는 진료 질문 추가 시 AI검색 노출 상승" },
+    { type: altRatio>=0.5 ? "good" : "issue",
+      text: `[이미지] ${imgCount}개 중 alt ${altCount}개(${Math.round(altRatio*100)}%) → ${altRatio<0.5?"alt 태그 보완 필요":"양호"}` },
     { type: hasDoctorKeyword ? "good" : "issue",
-      text: hasDoctorKeyword ? "원장·의료진 정보 확인됨 — E-E-A-T 신호 양호" : "원장 소개·경력 정보 부족 — 검색엔진 전문성 신호(E-E-A-T) 추가 필요" }
+      text: hasDoctorKeyword ? "[E-E-A-T] 원장·의료진 정보 확인됨 → 검색 신뢰 신호 양호" : "[E-E-A-T] 원장 소개·경력 부족 → 전문성 신호 추가 필요" },
+    { type: h1Count>=1 ? "good" : "issue",
+      text: `[구조] H1 ${h1Count}개 · H2/H3 ${headings}개 · 본문 약 ${textLen.toLocaleString("ko-KR")}자` }
   ];
 
   return {
     score: Math.min(35, Math.max(5, score)),
-    status: score >= 26 ? "양호" : score >= 16 ? "보통" : "미흡",
+    status: score>=26?"양호":score>=16?"보통":"미흡",
     findings,
     detail: { messageScore, seoScore, aiSeoScore, imageScore, contentScore, hasJsonLd, hasFaq, jsonLdTypes: jsonTypes, altRatio: Math.round(altRatio*100) }
   };
 }
 
 // ─────────────────────────────────────────────
-// ★ SCORING — 네이버 플레이스
-//   채점 기준: 4항목 × 5점 = 20점 만점
-//   네이버 플레이스 전용 로직 적용
+// ★ SCORING — 네이버 플레이스 (4항목 × 5점 = 20점)
 // ─────────────────────────────────────────────
 function scoreNaver(data: PageSnapshot | null, hadUrl: boolean): ChannelResult {
-  if (!hadUrl) return { score: 0, status: "미입력", findings: [{ type:"issue", text:"네이버 플레이스 URL이 입력되지 않아 분석에서 제외했습니다." }, { type:"tip", text:"플레이스 사진 등록 수·리뷰·의료진 정보를 직접 확인하면 더 정확합니다." }] };
-  if (!data?.ok) return { score: 4, status: "수집 실패", findings: [{ type:"issue", text: data?.error || "네이버 플레이스 페이지를 읽지 못했습니다." }, { type:"tip", text:"네이버 플레이스는 로그인·앱 전용 접근 시 수집이 제한될 수 있습니다." }] };
+  if (!hadUrl) return { score: 0, status: "미입력", findings: [
+    { type:"issue", text:"네이버 플레이스 URL이 입력되지 않아 분석에서 제외했습니다." },
+    { type:"tip",   text:"플레이스 사진·리뷰·의료진 정보를 직접 확인하면 더 정확합니다." }
+  ]};
+
+  const isPartial = data && !data.ok && (data as any).partial;
+  if (!data || (!data.ok && !isPartial)) {
+    const reason = (data as any)?.collect_reason || data?.error || "네이버 플레이스를 읽지 못했습니다.";
+    return { score: 4, status: "수집 실패", findings: [
+      { type:"issue", text:`수집 실패 — ${reason}` },
+      { type:"tip",   text:"네이버 플레이스는 앱 전용·로그인 필요 경우가 많습니다. 직접 육안 점검 권장." }
+    ]};
+  }
 
   const title    = data.title  || "";
-  const desc     = data.description || "";
   const sample   = (data.text_sample || "").toLowerCase();
   const imgCount = data.image_count || 0;
   const altCount = data.image_alt_count || 0;
 
-  // 네이버 플레이스 특화 키워드 파싱
   const hasHours       = /영업.*시간|운영.*시간|월~|평일|주말|am|pm|\d+:\d+/.test(sample);
   const hasPhone       = /전화|전화번호|tel|\d{2,4}-\d{3,4}-\d{4}/.test(sample);
   const hasAddress     = /서울|경기|부산|인천|대구|광주|대전|주소|위치/.test(sample);
@@ -600,134 +639,95 @@ function scoreNaver(data: PageSnapshot | null, hadUrl: boolean): ChannelResult {
   const hasFacility    = /공간|내부|시설|장비|인테리어|깔끔/.test(sample);
   const titleHasClinic = /병원|의원|클리닉|치과|피부|성형|한의/.test(title);
 
-  // ① 대표 사진 품질 (5점) — 이미지 수·alt 기반 추정
-  const photoScore = (() => {
-    if (imgCount >= 20 && altCount >= 5) return 5;
-    if (imgCount >= 10) return 3;
-    if (imgCount >= 3)  return 2;
-    if (imgCount >= 1)  return 1;
-    return 0;
-  })();
-
-  // ② 내부 사진 + 시설 정보 (5점)
-  const facilityScore = (() => {
-    let s = 0;
-    if (hasFacility)      s += 2;
-    if (imgCount >= 10)   s += 2;
-    if (hasSave)          s += 1;
-    return Math.min(5, s);
-  })();
-
-  // ③ 기본 정보 완성도 — 영업시간·전화·주소·메뉴 (5점)
-  const infoScore = (() => {
-    let s = 0;
-    if (hasHours)   s += 1;
-    if (hasPhone)   s += 1;
-    if (hasAddress) s += 1;
-    if (hasMenu)    s += 1;
-    if (titleHasClinic) s += 1;
-    return Math.min(5, s);
-  })();
-
-  // ④ 리뷰·저장·의료진 — 신뢰 지표 (5점)
-  const trustScore = (() => {
-    let s = 0;
-    if (hasReview)     s += 2;
-    if (hasDoctorInfo) s += 2;
-    if (hasSave)       s += 1;
-    return Math.min(5, s);
-  })();
-
-  const score = photoScore + facilityScore + infoScore + trustScore;
+  const photoScore    = imgCount>=20&&altCount>=5?5:imgCount>=10?3:imgCount>=3?2:imgCount>=1?1:0;
+  const facilityScore = Math.min(5, (hasFacility?2:0) + (imgCount>=10?2:0) + (hasSave?1:0));
+  const infoScore     = Math.min(5, (hasHours?1:0)+(hasPhone?1:0)+(hasAddress?1:0)+(hasMenu?1:0)+(titleHasClinic?1:0));
+  const trustScore    = Math.min(5, (hasReview?2:0)+(hasDoctorInfo?2:0)+(hasSave?1:0));
+  const score         = photoScore + facilityScore + infoScore + trustScore;
 
   const findings: Finding[] = [
-    { type: imgCount >= 10 ? "good" : "issue",
-      text: `이미지 태그 ${imgCount}개 확인 — ${imgCount < 5 ? "내부 공간·시설 사진이 부족합니다. 전문 사진 5장+ 등록 권장" : imgCount < 10 ? "사진 추가 등록으로 첫인상 개선 가능" : "사진 등록 양호"}` },
-    { type: hasHours && hasPhone ? "good" : "issue",
-      text: `기본 정보 — 영업시간 ${hasHours?"✓":"없음"} · 전화번호 ${hasPhone?"✓":"없음"} · 주소 ${hasAddress?"✓":"없음"} · 메뉴/진료 ${hasMenu?"✓":"없음"}` },
-    { type: hasReview ? "good" : "tip",
-      text: hasReview ? "리뷰·후기 정보 확인됨 — 정기적인 리뷰 관리로 신뢰도 유지 필요" : "리뷰 데이터 확인 불가 — 방문자 리뷰 수집과 블로그 리뷰 연동 권장" },
-    { type: hasDoctorInfo ? "good" : "issue",
-      text: hasDoctorInfo ? "의료진 정보 확인됨" : "의료진·원장 정보 없음 — 플레이스에 원장 프로필 사진·소개 등록 필요" },
-    { type: "tip",
-      text: "네이버 플레이스 저장 수·스마트콜 연동·포스트 연결 여부는 앱에서 직접 확인을 권장합니다." }
+    ...(isPartial ? [{ type:"tip" as FindingType, text:`부분 수집(HTTP ${data.status}) — 일부 데이터만 읽혔습니다. 결과는 참고용입니다.` }] : []),
+    { type: imgCount>=10?"good":"issue",
+      text: `[사진] 이미지 태그 ${imgCount}개 확인 → ${imgCount<5?"내부 공간 사진 부족, 전문 사진 5장+ 등록 권장":imgCount<10?"추가 등록으로 개선 가능":"양호"}` },
+    { type: (hasHours&&hasPhone)?"good":"issue",
+      text: `[기본정보] 영업시간 ${hasHours?"✓":"✗"} · 전화 ${hasPhone?"✓":"✗"} · 주소 ${hasAddress?"✓":"✗"} · 진료메뉴 ${hasMenu?"✓":"✗"} · 병원명 ${titleHasClinic?"✓":"✗"}` },
+    { type: hasReview?"good":"tip",
+      text: hasReview?"[리뷰] 리뷰·후기 확인됨 → 정기 관리로 신뢰도 유지 필요":"[리뷰] 데이터 확인 불가 → 방문자 리뷰 수집·블로그 리뷰 연동 권장" },
+    { type: hasDoctorInfo?"good":"issue",
+      text: hasDoctorInfo?"[의료진] 원장 정보 확인됨":"[의료진] 없음 → 플레이스에 원장 프로필 사진·소개 등록 필요" },
+    { type: hasFacility?"good":"tip",
+      text: hasFacility?"[시설] 공간·시설 관련 정보 확인됨":"[시설] 정보 없음 → 내부 공간·장비 사진과 시설 설명 추가 권장" },
+    { type:"tip",
+      text:`[참고] 저장수·스마트콜·포스트 연결은 네이버 앱 직접 확인 필요 (수집 데이터로 판독 불가)` }
   ];
 
   return {
     score: Math.min(20, Math.max(2, score)),
-    status: score >= 15 ? "양호" : score >= 8 ? "보통" : "미흡",
+    status: score>=15?"양호":score>=8?"보통":"미흡",
     findings,
-    detail: { photoScore, facilityScore, infoScore, trustScore, hasHours, hasPhone, hasReview, hasDoctorInfo, imgCount }
+    detail: { photoScore, facilityScore, infoScore, trustScore, hasHours, hasPhone, hasAddress, hasMenu, hasReview, hasDoctorInfo, hasFacility, imgCount, altCount }
   };
 }
 
 // ─────────────────────────────────────────────
-// ★ SCORING — 블로그
-//   채점 기준: 2항목 × 5점 = 10점 만점
-//   네이버 블로그 노출 로직 반영
+// ★ SCORING — 블로그 (2항목 × 5점 = 10점)
 // ─────────────────────────────────────────────
 function scoreBlog(data: PageSnapshot | null, hadUrl: boolean): ChannelResult {
-  if (!hadUrl) return { score: 0, status: "미입력", findings: [{ type:"issue", text:"블로그 URL이 입력되지 않아 분석에서 제외했습니다." }] };
-  if (!data?.ok) return { score: 2, status: "수집 실패", findings: [{ type:"issue", text: data?.error || "블로그 페이지를 읽지 못했습니다." }] };
+  if (!hadUrl) return { score: 0, status: "미입력", findings: [
+    { type:"issue", text:"블로그 URL이 입력되지 않아 분석에서 제외했습니다." }
+  ]};
+
+  const isPartial = data && !data.ok && (data as any).partial;
+  if (!data || (!data.ok && !isPartial)) {
+    const reason = (data as any)?.collect_reason || data?.error || "블로그 페이지를 읽지 못했습니다.";
+    return { score: 2, status: "수집 실패", findings: [
+      { type:"issue", text:`수집 실패 — ${reason}` }
+    ]};
+  }
 
   const title    = data.title  || "";
   const sample   = (data.text_sample || "").toLowerCase();
-  const imgCount = data.image_count  || 0;
+  const imgCount = data.image_count || 0;
   const altCount = data.image_alt_count || 0;
-  const textLen  = data.text_length  || 0;
+  const textLen  = data.text_length || 0;
   const headings = (data.headings || []).length;
   const h1Count  = (data.h1 || []).length;
 
-  // 블로그 특화 키워드
-  const hasTreatment   = /시술|진료|치료|수술|시술후기|부작용|효과|가격|비용/.test(sample);
+  const hasTreatment    = /시술|진료|치료|수술|시술후기|부작용|효과|가격|비용/.test(sample);
   const hasDoctorMention = /원장|전문의|의료진|상담/.test(sample);
   const hasLocalKeyword = /서울|강남|분당|신촌|홍대|강북|마포|구로|위치|지역/.test(sample);
-  const hasRealPhoto   = imgCount >= 3 && altCount >= 1;
-  const hasCtaKeyword  = /예약|상담|문의|전화|카카오|링크|바로가기/.test(sample);
-  const hasBeforeAfter = /전후|비교|결과|개선|효과/.test(sample);
+  const hasRealPhoto    = imgCount >= 3 && altCount >= 1;
+  const hasCtaKeyword   = /예약|상담|문의|전화|카카오|링크|바로가기/.test(sample);
+  const hasBeforeAfter  = /전후|비교|결과|개선|효과/.test(sample);
+  const hasKeywordTitle = /시술|진료|치료|병원|의원|클리닉/.test(title);
 
-  // ① 사진 품질·글 내용 일치도 (5점)
-  const contentScore = (() => {
-    let s = 0;
-    if (imgCount >= 8)  s += 2; else if (imgCount >= 3) s += 1;
-    if (altCount >= 3)  s += 1;
-    if (hasTreatment)   s += 1;
-    if (hasRealPhoto && hasTreatment) s += 1;
-    return Math.min(5, s);
-  })();
-
-  // ② 네이버 SEO 최적화·업데이트 빈도 추정 (5점)
-  const seoScore = (() => {
-    let s = 0;
-    // 제목 키워드 밀도
-    if (/시술|진료|치료|병원|의원|클리닉/.test(title)) s += 2; else if (title.length > 0) s += 1;
-    // 글 길이 (네이버 저품질 기준 800자 이상 권장)
-    if (textLen >= 1500) s += 2; else if (textLen >= 800) s += 1;
-    // 구조 (소제목)
-    if (headings >= 2 || h1Count >= 1) s += 1;
-    return Math.min(5, s);
-  })();
-
-  const score = contentScore + seoScore;
+  const contentScore = Math.min(5, (imgCount>=8?2:imgCount>=3?1:0) + (altCount>=3?1:0) + (hasTreatment?1:0) + (hasRealPhoto&&hasTreatment?1:0));
+  const seoScore     = Math.min(5, (hasKeywordTitle?2:title.length>0?1:0) + (textLen>=1500?2:textLen>=800?1:0) + (headings>=2||h1Count>=1?1:0));
+  const score        = contentScore + seoScore;
 
   const findings: Finding[] = [
-    { type: imgCount >= 5 ? "good" : "issue",
-      text: `이미지 ${imgCount}개 · alt 태그 ${altCount}개 — ${imgCount < 3 ? "실제 병원 사진 부족, 스톡 이미지 위주로 추정" : "사진 수 양호"}` },
-    { type: hasTreatment ? "good" : "issue",
-      text: hasTreatment ? "시술·진료 관련 키워드 확인됨 — 실제 치료 내용 중심 작성" : "시술·진료 관련 내용 부족 — 실제 진료 경험 중심 콘텐츠 필요" },
-    { type: textLen >= 800 ? "good" : "issue",
-      text: `본문 길이 약 ${textLen.toLocaleString("ko-KR")}자 — ${textLen < 800 ? "800자 이상 작성 권장 (네이버 저품질 방지)" : textLen < 1500 ? "양호, 1500자 이상이면 더 좋음" : "충분한 본문 길이"}` },
-    { type: hasLocalKeyword ? "good" : "tip",
-      text: hasLocalKeyword ? "지역 키워드 확인됨 — 지역 검색 노출에 유리" : "지역 키워드 없음 — 병원 위치 지역명 포함 시 지역 검색 노출 개선" },
-    { type: hasCtaKeyword ? "good" : "tip",
-      text: hasCtaKeyword ? "예약·상담 CTA 확인됨" : "예약·상담 유도 문구 없음 — 글 말미에 상담 링크·카카오채널 추가 권장" }
+    ...(isPartial ? [{ type:"tip" as FindingType, text:`부분 수집(HTTP ${data.status}) — 결과는 참고용입니다.` }] : []),
+    { type: imgCount>=5?"good":"issue",
+      text: `[사진] 이미지 ${imgCount}개 · alt ${altCount}개 → ${imgCount<3?"실제 병원 사진 부족, 스톡 이미지 위주 추정":"양호"}` },
+    { type: hasTreatment?"good":"issue",
+      text: hasTreatment?"[콘텐츠] 시술·진료 관련 키워드 확인됨 → 실제 치료 내용 중심":"[콘텐츠] 시술·진료 내용 부족 → 실제 진료 경험 중심 콘텐츠 필요" },
+    { type: textLen>=800?"good":"issue",
+      text: `[본문] 약 ${textLen.toLocaleString("ko-KR")}자 → ${textLen<800?"800자 이상 권장(네이버 저품질 방지)":textLen<1500?"양호, 1500자 이상이면 더 좋음":"충분"}` },
+    { type: hasKeywordTitle?"good":"tip",
+      text: hasKeywordTitle?"[제목] 진료 키워드 포함됨 → 네이버 검색 노출 유리":"[제목] 진료 키워드 없음 → 시술명·병원명 포함 시 검색 노출 개선" },
+    { type: hasLocalKeyword?"good":"tip",
+      text: hasLocalKeyword?"[지역] 지역 키워드 확인됨 → 지역 검색 노출 유리":"[지역] 없음 → 병원 위치 지역명 포함 권장" },
+    { type: hasCtaKeyword?"good":"tip",
+      text: hasCtaKeyword?"[CTA] 예약·상담 유도 문구 확인됨":"[CTA] 없음 → 글 말미에 상담 링크·카카오채널 추가 권장" },
+    { type: hasDoctorMention?"good":"tip",
+      text: hasDoctorMention?"[의료진] 원장 언급 확인됨":"[의료진] 원장 언급 없음 → 원장 전문성 강조 시 신뢰도 상승" }
   ];
 
   return {
     score: Math.min(10, Math.max(1, score)),
-    status: score >= 8 ? "양호" : score >= 5 ? "보통" : "미흡",
+    status: score>=8?"양호":score>=5?"보통":"미흡",
     findings,
-    detail: { contentScore, seoScore, imgCount, textLen, hasTreatment, hasLocalKeyword, hasCtaKeyword }
+    detail: { contentScore, seoScore, imgCount, altCount, textLen, hasTreatment, hasLocalKeyword, hasCtaKeyword, hasKeywordTitle, hasDoctorMention, hasBeforeAfter }
   };
 }
 
