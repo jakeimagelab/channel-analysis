@@ -37,6 +37,8 @@ type PageSnapshot = {
   og_description?: string;
   robots?: string;
   internal_links?: number;
+  partial?: boolean;
+  collect_reason?: string;
   error?: string;
 };
 
